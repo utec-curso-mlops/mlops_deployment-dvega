@@ -1,0 +1,74 @@
+# name: CI/CD for Online Inference with FaaS
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+# jobs:
+#   inference-pipeline:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v3
+#       - name: Python setup
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: 3.12
+#       - name: Install Python dependencies
+#         run: |
+#            pip install --upgrade pip
+#            pip install -r operation/online_inference_faas/requirements.txt
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v3
+#         with:
+#           aws-access-key-id: ${{ secrets.ACCESS_KEY }}
+#           aws-secret-access-key: ${{ secrets.SECRET_KEY }}
+#           aws-region: us-east-1
+#       - name: Unit testing
+#         run:  pytest operation/online_inference_faas/tests/test_unit.py -vv
+#       - name: Login to ECR
+#         run: aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ vars.ECR_URL }}
+#       - name: Create ECR repository if it doesn't exist
+#         run: |
+#           REPO_NAME="utec-mlops/${{ github.actor }}/online-prediction-faas"
+#           EXISTING_REPO=$(aws ecr describe-repositories --repository-name "$REPO_NAME" 2>&1 || echo "NOT_FOUND")
+#           if [[ "$EXISTING_REPO" == *"RepositoryNotFoundException"* ]]; then
+#             echo "Repository does not exist. Creating..."
+#             aws ecr create-repository --repository-name "$REPO_NAME"
+#           else
+#             echo "Repository exists."
+#           fi
+#       - name: Build image
+#         run: docker build -t "utec-mlops/${{ github.actor }}/online-prediction-faas" operation/online_inference_faas
+#       - name: Tag image
+#         run: docker tag "utec-mlops/${{ github.actor }}/online-prediction-faas:latest" "${{ vars.ECR_URL }}/utec-mlops/${{ github.actor }}/online-prediction-faas:latest"
+#       - name: Push image
+#         run: docker push "${{ vars.ECR_URL }}/utec-mlops/${{ github.actor }}/online-prediction-faas:latest"
+#       - name: Create or update Lambda function
+#         run: |
+#           FUNCTION_NAME="mlops-utec-${{ github.actor }}-online-prediction-faas"
+#           ROLE_ARN="${{ vars.LAMBDA_ROLE }}"
+#           IMAGE_URI="${{ vars.ECR_URL }}/utec-mlops/${{ github.actor }}/online-prediction-faas:latest"
+
+#           # Check if Lambda function exists
+#           EXISTING_FUNCTION=$(aws lambda get-function --function-name "$FUNCTION_NAME" 2>&1 || echo "NOT_FOUND")
+
+#           if [[ "$EXISTING_FUNCTION" == *"ResourceNotFoundException"* ]]; then
+#             echo "Creating Lambda function..."
+#             aws lambda create-function \
+#               --function-name "$FUNCTION_NAME" \
+#               --package-type Image \
+#               --code "ImageUri=$IMAGE_URI" \
+#               --role "$ROLE_ARN" \
+#               --architectures x86_64 \
+#               --region us-east-1 \
+#               --timeout 120
+#           else
+#             echo "Updating Lambda function..."
+#             aws lambda update-function-code \
+#               --function-name "$FUNCTION_NAME" \
+#               --image-uri "$IMAGE_URI"
+#           fi
+#       - name: Integration testing
+#         run:  pytest operation/online_inference_faas/tests/test_integration.py -vv
